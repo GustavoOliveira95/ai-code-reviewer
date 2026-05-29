@@ -1,0 +1,80 @@
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.Api
+    ports:
+      - "5000:8080"
+    environment:
+      - GitHub__Token=${GITHUB__TOKEN}
+      - GitHub__WebhookSecret=${GITHUB__WEBHOOKSECRET}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__User=${RABBITMQ__USER:-guest}
+      - RabbitMQ__Password=${RABBITMQ__PASSWORD:-guest}
+      - Ollama__Endpoint=http://ollama:11434
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.Worker
+    environment:
+      - GitHub__Token=${GITHUB__TOKEN}
+      - GitHub__WebhookSecret=${GITHUB__WEBHOOKSECRET}
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__User=${RABBITMQ__USER:-guest}
+      - RabbitMQ__Password=${RABBITMQ__PASSWORD:-guest}
+      - Ollama__Endpoint=http://ollama:11434
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ__USER:-guest}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ__PASSWORD:-guest}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: bash -c 'echo > /dev/tcp/localhost/11434' 2>/dev/null && exit 0 || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ollama-init:
+    image: ollama/ollama
+    volumes:
+      - ollama_models:/root/.ollama
+    entrypoint: ["ollama", "pull", "llama3.2:3b"]
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+volumes:
+  rabbitmq_data:
+  ollama_models:
